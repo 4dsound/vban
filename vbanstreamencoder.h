@@ -1,8 +1,10 @@
-#include "vban.h"
+#include <vban.h>
+#include <dirtyflag.h>
 
 #include <functional>
 #include <string>
 #include <cassert>
+#include <mutex>
 
 namespace vban
 {
@@ -28,16 +30,6 @@ namespace vban
 		virtual ~VBANStreamEncoder() = default;
 
 		/**
-		 * Activates the encoding process and start sending packets.
-		 */
-		void start();
-
-		/**
-		 * Deacitvates the encoding process.
-		 */
-		void stop();
-
-		/**
 		 * Call this method to process incoming sample from the multichannel audio signal.
 		 * @tparam T Type for the multichannel audio data. Implements a subscript operator that returns data for a single channel.
 		 * 	Data for a single channel also needs to implement a subscript operator that returns samples as floating point values.
@@ -53,34 +45,25 @@ namespace vban
 		 * Sets the sample rate of the stream to one of the supported VBAN sample rate formats.
 		 * @param format Index to one of the sample rate formats specified in VBanSRList
 		 */
-		void setSampleRateFormat(int format)
-		{
-			assert(format < VBAN_SR_MAXNUMBER);
-			mSampleRateFormat = format;
-			reset();
-		}
+		void setSampleRateFormat(int format);
 
 		/**
 		 * Sets the number of audio channels encoded in the stream.
 		 * @param value
 		 */
-		void setChannelCount(int value)
-		{
-			assert(value <= VBAN_CHANNELS_MAX_NB);
-			mChannelCount = value;
-			reset();
-		}
+		void setChannelCount(int value);
 
 		/**
 		 * Sets the name of the stream as encoded in the packets.
 		 * @param name Has to be equal or smaller than 16 characters.
 		 */
-		void setStreamName(const std::string& name)
-		{
-			assert(mStreamName.size() <= 16);
-			mStreamName = name;
-			reset();
-		}
+		void setStreamName(const std::string& name);
+
+		/**
+		 * Activates or deactivates the vban encoding.
+		 * @param value True on activate, false on deactivate
+		 */
+		void setActive(bool value);
 
 		/**
 		 * @return The name of the VBAN stream.
@@ -90,26 +73,29 @@ namespace vban
 		/**
 		 * @return Whether the encoder is running and sending VBAN packets.
 		 */
-		int isActive() const { return mIsActive; }
+		int isActive() const { return mIsActive.load(); }
 
 	private:
 		/**
-		 * Restarts the encoder if it is active.
+		 * Updates the internal state from the current settings
 		 */
-		void reset();
+		void update();
 
 		// Settings
-		int mSampleRateFormat = 0; // Index to VBanSRList, sample rates supported by VBAN
-		int mChannelCount = 2; // Number of channels of audio being sent
+		std::atomic<int> mSampleRateFormat = { 0 }; // Index to VBanSRList, sample rates supported by VBAN
+		std::atomic<int> mChannelCount = { 2 }; // Number of channels of audio being sent
+		std::atomic<bool> mIsActive = { false };
+		DirtyFlag mIsDirty;
 
-		std::vector<char> mVbanBuffer = { }; // Data containing the full VBAN packet including the header
+		std::vector<char> mVbanBuffer; // Data containing the full VBAN packet including the header
 		VBanHeader *mPacketHeader = nullptr; // Pointer to packet header within mVbanBuffer
 
 		// State
 		std::string mStreamName = "vbanstream";
+		std::mutex mStreamNameLock;
 		int mPacketWritePos = VBAN_HEADER_SIZE; // Write position in the mVbanBuffer of incoming audio data.
 		int mPacketCounter = 0; // Number of packets sent
-		bool mIsActive = false;
+		int mCurrentChannelCount = 0; // Current channelcount
 
 		SenderType& mSender;
 	};
@@ -120,6 +106,9 @@ namespace vban
 	{
 		if (!mIsActive)
 			return;
+
+		if (mIsDirty.check())
+			update();
 
 		for (auto i = 0; i < sampleCount; ++i)
 		{
@@ -149,11 +138,44 @@ namespace vban
 
 
 	template <typename SenderType>
-	void VBANStreamEncoder<SenderType>::start()
+	void VBANStreamEncoder<SenderType>::setSampleRateFormat(int format)
 	{
-		if (mIsActive)
-			return;
+		assert(format < VBAN_SR_MAXNUMBER);
+		mSampleRateFormat.store(format);
+		mIsDirty.set();
+	}
 
+
+	template <typename SenderType>
+	void VBANStreamEncoder<SenderType>::setChannelCount(int value)
+	{
+		assert(value <= VBAN_CHANNELS_MAX_NB);
+		mChannelCount.store(value);
+		mIsDirty.set();
+	}
+
+
+	template <typename SenderType>
+	void VBANStreamEncoder<SenderType>::setStreamName(const std::string& name)
+	{
+		assert(name.size() <= 16);
+		std::lock_guard<std::mutex> lock(mStreamNameLock);
+		mStreamName = name;
+		mIsDirty.set();
+	}
+
+
+	template <typename SenderType>
+	void VBANStreamEncoder<SenderType>::setActive(bool value)
+	{
+		mIsActive.store(value);
+		mIsDirty.set();
+	}
+
+
+	template <typename SenderType>
+	void VBANStreamEncoder<SenderType>::update()
+	{
 		// Determine size of a single channel
 		auto channelSize = int(VBAN_SAMPLES_MAX_NB / mChannelCount) * 2;
 
@@ -173,29 +195,12 @@ namespace vban
 		mPacketHeader->format_nbc = mChannelCount - 1;
 		mPacketHeader->format_SR  = mSampleRateFormat;
 		mPacketHeader->format_bit = VBAN_BITFMT_16_INT;
-		strncpy(mPacketHeader->streamname, mStreamName.c_str(), VBAN_STREAM_NAME_SIZE - 1);
+		{
+			std::lock_guard<std::mutex> lock(mStreamNameLock);
+			strncpy(mPacketHeader->streamname, mStreamName.c_str(), VBAN_STREAM_NAME_SIZE - 1);
+		}
 		mPacketHeader->nuFrame    = mPacketCounter;
 		mPacketHeader->format_nbs = (channelSize / 2) - 1;
-
-		mIsActive = true;
-	}
-
-
-	template <typename SenderType>
-	void VBANStreamEncoder<SenderType>::stop()
-	{
-		mIsActive = false;
-	}
-
-
-	template <typename SenderType>
-	void VBANStreamEncoder<SenderType>::reset()
-	{
-		if (mIsActive)
-		{
-			stop();
-			start();
-		}
 	}
 
 }
