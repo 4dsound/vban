@@ -87,15 +87,16 @@ namespace vban
 		std::atomic<bool> mIsActive = { false };
 		DirtyFlag mIsDirty;
 
-		std::vector<char> mVbanBuffer; // Data containing the full VBAN packet including the header
-		VBanHeader *mPacketHeader = nullptr; // Pointer to packet header within mVbanBuffer
-
 		// State
 		std::string mStreamName = "vbanstream";
 		std::mutex mStreamNameLock;
 		int mPacketWritePos = VBAN_HEADER_SIZE; // Write position in the mVbanBuffer of incoming audio data.
 		int mPacketCounter = 0; // Number of packets sent
 		int mCurrentChannelCount = 0; // Current channelcount
+
+		// VBAN packet
+		std::vector<char> mVbanBuffer; // Data containing the full VBAN packet including the header
+		VBanHeader *mPacketHeader = nullptr; // Pointer to packet header within mVbanBuffer
 
 		SenderType& mSender;
 	};
@@ -112,7 +113,7 @@ namespace vban
 
 		for (auto i = 0; i < sampleCount; ++i)
 		{
-			for (auto channel = 0; channel < mChannelCount; ++channel)
+			for (auto channel = 0; channel < mCurrentChannelCount; ++channel)
 			{
 				float sample = input[channel][i];
 				auto value = static_cast<short>(sample * 32768.0f);
@@ -176,11 +177,13 @@ namespace vban
 	template <typename SenderType>
 	void VBANStreamEncoder<SenderType>::update()
 	{
+		mCurrentChannelCount = mChannelCount.load();
+
 		// Determine size of a single channel
-		auto channelSize = int(VBAN_SAMPLES_MAX_NB / mChannelCount) * 2;
+		auto channelSize = int(VBAN_SAMPLES_MAX_NB / mCurrentChannelCount) * 2;
 
 		// set packet size
-		auto packetSize = channelSize * mChannelCount + VBAN_HEADER_SIZE;
+		auto packetSize = channelSize * mCurrentChannelCount + VBAN_HEADER_SIZE;
 
 		// resize the packet data to have the correct size
 		mVbanBuffer.resize(packetSize);
@@ -192,8 +195,8 @@ namespace vban
 		// initialize VBAN header
 		mPacketHeader = (struct VBanHeader*)(&mVbanBuffer[0]);
 		mPacketHeader->vban       = *(int32_t*)("VBAN");
-		mPacketHeader->format_nbc = mChannelCount - 1;
-		mPacketHeader->format_SR  = mSampleRateFormat;
+		mPacketHeader->format_nbc = mCurrentChannelCount - 1;
+		mPacketHeader->format_SR  = mSampleRateFormat.load();
 		mPacketHeader->format_bit = VBAN_BITFMT_16_INT;
 		{
 			std::lock_guard<std::mutex> lock(mStreamNameLock);
