@@ -66,14 +66,14 @@ namespace vban
 		void setActive(bool value);
 
 		/**
-		 * @return The name of the VBAN stream.
-		 */
-		const std::string& getStreamName() const { return mStreamName; }
-
-		/**
 		 * @return Whether the encoder is running and sending VBAN packets.
 		 */
 		int isActive() const { return mIsActive.load(); }
+
+		/**
+		 * @return Number of channels being sent by the stream.
+		 */
+		int getChannelCount() const { return mChannelCount.load(); }
 
 	private:
 		/**
