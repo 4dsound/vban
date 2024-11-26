@@ -1,5 +1,5 @@
-#include <vban.h>
-#include <dirtyflag.h>
+#include "vban.h"
+#include "dirtyflag.h"
 
 #include <functional>
 #include <string>
@@ -13,7 +13,7 @@ namespace vban
 	 * Helper class to encode a multichannel audio signal into a VBAN packet stream that can be send through an external protocol.
 	 * @tparam SenderType The type of the sender object that is invoked by the encoder to send the VBAN packets.
 	 * 	The SenderType has to implement the sendPacket() method with the following signature:
-	 * 	SenderType::sendPacket(char* data, int size);
+	 * 	SenderType::sendPacket(const std::vector<char>& data);
 	 * 	With data being a pointer to the VBAN packet data and size the size of the packet.
 	 */
 	template <typename SenderType>
@@ -130,7 +130,7 @@ namespace vban
 			{
 				assert(mPacketWritePos == mVbanBuffer.size());
 				mPacketHeader->nuFrame = mPacketCounter;
-				mSender.sendPacket(mVbanBuffer.data(), mVbanBuffer.size());
+				mSender.sendPacket(mVbanBuffer);
 				mPacketWritePos = VBAN_HEADER_SIZE;
 				mPacketCounter++;
 			}
