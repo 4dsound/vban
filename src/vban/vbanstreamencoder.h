@@ -116,7 +116,11 @@ namespace vban
 			for (auto channel = 0; channel < mCurrentChannelCount; ++channel)
 			{
 				float sample = input[channel][i];
-				auto value = static_cast<short>(sample * 32768.0f);
+				if (sample < -1.f)
+					sample = -1.f;
+				if (sample > 1.f)
+					sample = 1.f;
+				auto value = static_cast<short>(sample * 32767.0f);
 
 				// convert short to two bytes
 				char byte_1 = value;
