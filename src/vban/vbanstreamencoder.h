@@ -49,6 +49,20 @@ namespace vban
 		void setSampleRateFormat(int format);
 
 		/**
+		 * Sets the buffer size of the calling audio processing system.
+		 * The vban packet size will adapt to this buffer size in order to achieve the lowest possible latency.
+		 * @param bufferSize in samples
+		 */
+		void setBufferSize(int bufferSize);
+
+		/**
+		 * Sets the bit rate of the audio data, or the number of bits per sample.
+		 * At the moment only 16 and 32 bit audio is supported. Other values result in a runtime error.
+		 * @param bitrate The desired number of bits per sample
+		 */
+		void setBitrate(int bitrate);
+
+		/**
 		 * Sets the number of audio channels encoded in the stream.
 		 * @param value
 		 */
@@ -85,6 +99,8 @@ namespace vban
 		// Settings
 		std::atomic<int> mSampleRateFormat = { 0 }; // Index to VBanSRList, sample rates supported by VBAN
 		std::atomic<int> mChannelCount = { 2 }; // Number of channels of audio being sent
+		std::atomic<int> mBufferSize = { 256 }; // Buffer size of the audio processing
+		std::atomic<int> mBitrate = { 16 }; // Bit rate of the vban data
 		std::atomic<bool> mIsActive = { false };
 		DirtyFlag mIsDirty;
 
@@ -121,7 +137,7 @@ namespace vban
 					sample = -1.f;
 				if (sample > 1.f)
 					sample = 1.f;
-				auto value = static_cast<short>(sample * 32767.0f);
+				auto value = static_cast<int16_t>(sample * 32767.0f);
 
 				// convert short to two bytes
 				char byte_1 = value;
@@ -149,6 +165,22 @@ namespace vban
 		assert(format < VBAN_SR_MAXNUMBER);
 		mSampleRateFormat.store(format);
 		mIsDirty.set();
+	}
+
+
+	template<typename SenderType>
+	void VBANStreamEncoder<SenderType>::setBufferSize(int bufferSize)
+	{
+		mBufferSize.store(bufferSize);
+		mIsDirty.set();
+	}
+
+
+	template<typename SenderType>
+	void VBANStreamEncoder<SenderType>::setBitrate(int bitrate)
+	{
+		assert(bitrate == 16 || bitrate == 32);
+		mBitrate.store(bitrate);
 	}
 
 
@@ -184,11 +216,23 @@ namespace vban
 	{
 		mCurrentChannelCount = mChannelCount.load();
 
-		// Determine size of a single channel
-		auto channelSize = int(VBAN_SAMPLES_MAX_NB / mCurrentChannelCount) * 2;
+		int bytesPerSample = 2;
+		if (mBitrate.load() == 32)
+			bytesPerSample = 4;
 
-		// set packet size
-		auto packetSize = channelSize * mCurrentChannelCount + VBAN_HEADER_SIZE;
+		// Determine the packet size
+		// Ideally the packet holds one single buffer of the calling DSP system
+		int samplesPerPacket = mBufferSize.load();
+		if (samplesPerPacket > VBAN_SAMPLES_MAX_NB)
+			samplesPerPacket = VBAN_SAMPLES_MAX_NB;
+		int samplesSize = samplesPerPacket * bytesPerSample * mCurrentChannelCount;
+		if (samplesSize > VBAN_DATA_MAX_SIZE)
+		{
+			samplesPerPacket = (VBAN_DATA_MAX_SIZE / bytesPerSample) / mCurrentChannelCount;
+			samplesSize = samplesPerPacket * bytesPerSample * mCurrentChannelCount;
+		}
+
+		auto packetSize = samplesSize + VBAN_HEADER_SIZE;
 
 		// resize the packet data to have the correct size
 		mVbanBuffer.resize(packetSize);
@@ -208,7 +252,7 @@ namespace vban
 			strncpy(mPacketHeader->streamname, mStreamName.c_str(), VBAN_STREAM_NAME_SIZE - 1);
 		}
 		mPacketHeader->nuFrame    = mPacketCounter;
-		mPacketHeader->format_nbs = (channelSize / 2) - 1;
+		mPacketHeader->format_nbs = samplesPerPacket - 1;
 	}
 
 }
