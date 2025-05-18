@@ -25,13 +25,13 @@
 extern "C" {
 #endif
 
-#define VBAN_HEADER_SIZE            (4 + 5 + 16 + 4) // 28
+#define VBAN_HEADER_SIZE            (4 + 4 + 16 + 4) // 28
 #define VBAN_HEADER_FOURC           'NABV'
 #define VBAN_STREAM_NAME_SIZE       16
-#define VBAN_PROTOCOL_MAX_SIZE      65535
+#define VBAN_PROTOCOL_MAX_SIZE      1464
 #define VBAN_DATA_MAX_SIZE          (VBAN_PROTOCOL_MAX_SIZE - VBAN_HEADER_SIZE)
 #define VBAN_CHANNELS_MAX_NB        256
-#define VBAN_SAMPLES_MAX_NB         2048
+#define VBAN_SAMPLES_MAX_NB         256
 
 #ifdef _MSC_VER
 #pragma pack(push,1)
@@ -42,7 +42,7 @@ struct VBanHeader
 {
     uint32_t    vban;                               /* contains 'V' 'B', 'A', 'N' */
     uint8_t     format_SR;                          /* SR index (see SRList above) */
-    uint16_t    format_nbs;                         /* nb sample per frame (1 to 2048) */
+    uint8_t     format_nbs;                         /* nb sample per frame (1 to 256) */
     uint8_t     format_nbc;                         /* nb channel (1 to 256) */
     uint8_t     format_bit;                         /* mask = 0x07 (nb Byte integer from 1 to 4) */
     char        streamname[VBAN_STREAM_NAME_SIZE];  /* stream name */
