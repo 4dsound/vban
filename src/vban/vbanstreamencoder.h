@@ -56,11 +56,11 @@ namespace vban
 		void setBufferSize(int bufferSize);
 
 		/**
-		 * Sets the bit rate of the audio data, or the number of bits per sample.
+		 * Sets the bit depth of the audio data, or the number of bits per sample.
 		 * At the moment only 16 and 32 bit audio is supported. Other values result in a runtime error.
-		 * @param bitrate The desired number of bits per sample
+		 * @param bitDepth The desired number of bits per sample
 		 */
-		void setBitrate(int bitrate);
+		void setBitDepth(int bitDepth);
 
 		/**
 		 * Sets the number of audio channels encoded in the stream.
@@ -100,7 +100,7 @@ namespace vban
 		std::atomic<int> mSampleRateFormat = { 0 }; // Index to VBanSRList, sample rates supported by VBAN
 		std::atomic<int> mChannelCount = { 2 }; // Number of channels of audio being sent
 		std::atomic<int> mBufferSize = { 256 }; // Buffer size of the audio processing
-		std::atomic<int> mBitrate = { 16 }; // Bit rate of the vban data
+		std::atomic<int> mBitDepth = { 16 }; // Bit depth of the vban data
 		std::atomic<bool> mIsActive = { false };
 		DirtyFlag mIsDirty;
 
@@ -110,6 +110,7 @@ namespace vban
 		int mPacketWritePos = VBAN_HEADER_SIZE; // Write position in the mVbanBuffer of incoming audio data.
 		int mPacketCounter = 0; // Number of packets sent
 		int mCurrentChannelCount = 0; // Current channelcount
+		int mBytesPerSample = 2; // Determined from bit depth setting
 
 		// VBAN packet
 		std::vector<char> mVbanBuffer; // Data containing the full VBAN packet including the header
@@ -137,15 +138,26 @@ namespace vban
 					sample = -1.f;
 				if (sample > 1.f)
 					sample = 1.f;
-				auto value = static_cast<int16_t>(sample * 32767.0f);
 
-				// convert short to two bytes
-				char byte_1 = value;
-				char byte_2 = value >> 8;
-				mVbanBuffer[mPacketWritePos] = byte_1;
-				mVbanBuffer[mPacketWritePos + 1] = byte_2;
+				if (mBytesPerSample == 4)
+				{
+					auto value = static_cast<int32_t>(sample * std::numeric_limits<int32_t>::max());
 
-				mPacketWritePos += 2;
+					// convert 32 bit int to four bytes
+					mVbanBuffer[mPacketWritePos] = value;
+					mVbanBuffer[mPacketWritePos + 1] = value >> 8;
+					mVbanBuffer[mPacketWritePos + 2] = value >> 16;
+					mVbanBuffer[mPacketWritePos + 3] = value >> 24;
+					mPacketWritePos += 4;
+				}
+				else {
+					auto value = static_cast<int16_t>(sample * std::numeric_limits<int16_t>::max());
+
+					// convert 16 bit int to two bytes
+					mVbanBuffer[mPacketWritePos] = value;
+					mVbanBuffer[mPacketWritePos + 1] = value >> 8;
+					mPacketWritePos += 2;
+				}
 			}
 			if (mPacketWritePos >= mVbanBuffer.size())
 			{
@@ -177,10 +189,11 @@ namespace vban
 
 
 	template<typename SenderType>
-	void VBANStreamEncoder<SenderType>::setBitrate(int bitrate)
+	void VBANStreamEncoder<SenderType>::setBitDepth(int bitrate)
 	{
 		assert(bitrate == 16 || bitrate == 32);
-		mBitrate.store(bitrate);
+		mBitDepth.store(bitrate);
+		mIsDirty.set();
 	}
 
 
@@ -216,20 +229,20 @@ namespace vban
 	{
 		mCurrentChannelCount = mChannelCount.load();
 
-		int bytesPerSample = 2;
-		if (mBitrate.load() == 32)
-			bytesPerSample = 4;
+		mBytesPerSample = 2;
+		if (mBitDepth.load() == 32)
+			mBytesPerSample = 4;
 
 		// Determine the packet size
 		// Ideally the packet holds one single buffer of the calling DSP system
 		int samplesPerPacket = mBufferSize.load();
 		if (samplesPerPacket > VBAN_SAMPLES_MAX_NB)
 			samplesPerPacket = VBAN_SAMPLES_MAX_NB;
-		int samplesSize = samplesPerPacket * bytesPerSample * mCurrentChannelCount;
+		int samplesSize = samplesPerPacket * mBytesPerSample * mCurrentChannelCount;
 		if (samplesSize > VBAN_DATA_MAX_SIZE)
 		{
-			samplesPerPacket = (VBAN_DATA_MAX_SIZE / bytesPerSample) / mCurrentChannelCount;
-			samplesSize = samplesPerPacket * bytesPerSample * mCurrentChannelCount;
+			samplesPerPacket = (VBAN_DATA_MAX_SIZE / mBytesPerSample) / mCurrentChannelCount;
+			samplesSize = samplesPerPacket * mBytesPerSample * mCurrentChannelCount;
 		}
 
 		auto packetSize = samplesSize + VBAN_HEADER_SIZE;
@@ -246,7 +259,10 @@ namespace vban
 		mPacketHeader->vban       = *(int32_t*)("VBAN");
 		mPacketHeader->format_nbc = mCurrentChannelCount - 1;
 		mPacketHeader->format_SR  = mSampleRateFormat.load();
-		mPacketHeader->format_bit = VBAN_BITFMT_16_INT;
+		if (mBytesPerSample == 4)
+			mPacketHeader->format_bit = VBAN_BITFMT_32_INT;
+		else
+			mPacketHeader->format_bit = VBAN_BITFMT_16_INT;
 		{
 			std::lock_guard<std::mutex> lock(mStreamNameLock);
 			strncpy(mPacketHeader->streamname, mStreamName.c_str(), VBAN_STREAM_NAME_SIZE - 1);
