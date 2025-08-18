@@ -6,6 +6,7 @@
 #include <cassert>
 #include <mutex>
 #include <vector>
+#include <cstring>
 
 namespace vban
 {
@@ -265,7 +266,7 @@ namespace vban
 			mPacketHeader->format_bit = VBAN_BITFMT_16_INT;
 		{
 			std::lock_guard<std::mutex> lock(mStreamNameLock);
-			strncpy(mPacketHeader->streamname, mStreamName.c_str(), VBAN_STREAM_NAME_SIZE - 1);
+			std::memcpy(mPacketHeader->streamname, mStreamName.c_str(), VBAN_STREAM_NAME_SIZE - 1);
 		}
 		mPacketHeader->nuFrame    = mPacketCounter;
 		mPacketHeader->format_nbs = samplesPerPacket - 1;
