@@ -12,11 +12,11 @@ namespace vban
 {
 
 	/**
-	 * Helper class to encode a multichannel audio signal into a VBAN packet stream that can be send through an external protocol.
+	 * Helper class to encode a multichannel audio signal into a VBAN packet stream that can be sent through an external protocol.
 	 * @tparam SenderType The type of the sender object that is invoked by the encoder to send the VBAN packets.
 	 * 	The SenderType has to implement the sendPacket() method with the following signature:
 	 * 	SenderType::sendPacket(const std::vector<char>& data);
-	 * 	With data being a pointer to the VBAN packet data and size the size of the packet.
+	 * 	With data containing the vban packet to be sent.
 	 */
 	template <typename SenderType>
 	class VBANStreamEncoder
